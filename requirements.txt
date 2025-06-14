@@ -2,3 +2,10 @@ pandas
 numpy
 faker
 scikit-learn
+langchain
+langchain-openai
+openai
+sqlalchemy
+plotly
+pyyaml 
+langchain-community

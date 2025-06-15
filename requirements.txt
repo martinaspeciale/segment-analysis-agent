@@ -1,11 +1,26 @@
+# Core Data Science
 pandas
 numpy
-faker
 scikit-learn
+sqlalchemy
+pyyaml
+plotly
+
+# AI & LLMs
 langchain
 langchain-openai
 openai
-sqlalchemy
-plotly
-pyyaml 
 langchain-community
+langchain_ollama
+
+# Terminal / Utilities
+rich
+requests
+faker
+
+# Notebook Environment (Optional / Dev)
+ipython
+jupyter
+
+# Ollama Python bindings (used via `ollama.chat`)
+ollama

@@ -19,7 +19,9 @@ np.random.seed(42)
 '''
 n_leads = 1_000_000
 n_transactions = 500_000
-db_file = "../data/leads_scored_segmentation.db"
+# Save DB in ../data/ relative to this script
+script_dir = os.path.dirname(os.path.abspath(__file__))
+db_file = os.path.join(script_dir, "..", "data", "leads_scored_segmentation.db")
 
 # Predefined choices
 country_codes = ['us', 'in', 'mx', 'co', 'nl', 'sg', 'other']
@@ -58,12 +60,23 @@ def generate_leads(n):
 # Generate transactions
 def generate_transactions(leads_df, n):
     emails = leads_df['user_email'].tolist()
+    names = leads_df.set_index('user_email')['user_full_name'].to_dict()
+    countries = ['US', 'IN', 'AU', 'NZ', 'GB', 'CA', 'MX', 'CO', 'NL', 'SG']
+    product_ids = [21, 23, 31, 37, 41]  # Example course/product IDs
+
+    transaction_emails = [random.choice(emails) for _ in range(n)]
+
     transactions = {
         'transaction_id': [fake.uuid4() for _ in range(n)],
-        'user_email': [random.choice(emails) for _ in range(n)],
-        'timestamp': [fake.date_time_between(start_date='-5y', end_date='now') for _ in range(n)]
+        'user_email': transaction_emails,
+        'user_full_name': [names[email] for email in transaction_emails],
+        'purchased_at': [fake.date_time_between(start_date='-5y', end_date='now') for _ in range(n)],
+        'charge_country': [random.choice(countries) for _ in range(n)],
+        'product_id': [random.choice(product_ids) for _ in range(n)]
     }
+
     return pd.DataFrame(transactions)
+
 
 # Generate and save
 print("🟡 Generating leads...")

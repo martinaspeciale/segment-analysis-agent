@@ -27,7 +27,7 @@ import plotly.io as pio
 from pprint import pprint
 
 # === CUSTOM UTILITIES ===
-from marketing_analysis_team.agents.utils import get_last_human_message  
+from marketing_analysis_team.agents.utils import run_segment_analysis, get_last_human_message
 
 # === OLLAMA LOW-LEVEL ===
 import ollama
@@ -114,7 +114,7 @@ Rules:
 If analysis is required, return something like:
 
 {{ 
-  "general_response": "A concise summary of the customer segmentation analysis.",
+  "general_response": "A brief natural language sentence summarizing the key findings from the customer segmentation.",
   "analysis_required": true,
   "segment_labels": {{
     "0": "Label for segment 0",
@@ -171,7 +171,8 @@ test_input = {
     ]
 }
 segment_analyzer = segment_analysis_prompt | llm | JsonOutputParser()
-
+run_segment_analysis(segment_analyzer, test_input, show_raw=True, show_json=True)
+''' 
 result = segment_analyzer.invoke(test_input)
 print("🟡 Raw response from model:")
 print(result)
@@ -213,3 +214,5 @@ markdown_report = f"""
 # Print 
 console = Console()
 console.print(Markdown(markdown_report))
+
+'''

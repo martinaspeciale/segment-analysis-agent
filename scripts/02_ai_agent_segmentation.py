@@ -1,3 +1,5 @@
+from io import StringIO
+
 # === TERMINAL RENDERING ===
 from rich.console import Console
 from rich.markdown import Markdown
@@ -85,62 +87,58 @@ console.print(Markdown(markdown_text))
 segment_analysis_prompt = PromptTemplate(
     input_variables=["initial_question", "chat_history", "segment_statistics"],
     template="""
-You are an expert in marketing analytics for Business Science,
-a premium data science educational platform.
-Analyze the user's request to determine if it requires
-analyzing customer segments from the database.
+You are an expert in marketing analytics for Business Science.
 
-The segments are precomputed with numeric IDs (e.g., 0, 1, 2).
-Your task is to:
+Your task is to analyze whether the user's question requires segmentation analysis and, if so, to:
+- Assign meaningful descriptive labels to each segment (segments are identified by numeric IDs like 0, 1, 2, ...).
+- Identify key patterns and actionable marketing insights based on segment statistics.
+- Return all results in a strict JSON format.
 
-1. Generate descriptive labels for each segment based on their statistics.
-2. Provide insights into patterns across segments. Call this section "Segment Insights".
-3. Suggest detailed marketing implications and campaign strategies for the different segments based on their attributes. Call this section "Marketing Implications".
+Metrics for each segment include:
+- avg_p1: Lead score (0 to 1)
+- avg_member_rating: Engagement score (1 to 5)
+- avg_purchase_frequency: Average number of transactions per customer
+- customer_count: Number of customers in the segment
 
-Metrics provided:
-- avg_p1: Lead score (0 to 1, higher means more likely to purchase).
-- avg_member_rating: Engagement rating (1 to 5, higher means more engaged).
-- avg_purchase_frequency: Average number of transactions per customer.
-- customer_count: Number of customers in the segment.
+Make your reasoning precise and business-oriented.
 
-If segment analysis is requested, provide:
-1. A general response summarizing the analysis.
-2. A dictionary mapping segment IDs to descriptive labels (e.g., {{ "0": "High-Value Customers" }}).
-3. Detailed insights explaining patterns and marketing implications.
-4. A summary table of segment statistics in markdown format, using the generated labels.
+RETURN FORMAT (JSON only — not inside code blocks):
 
-In the general response, include:
-- A summary of the analysis.
-- Provide insights into patterns across segments. Call this section "Segment Insights".
-- Suggest campaign strategies for the different segments. Title this as "Marketing Implications".
-- Use bullets and tables to make the response clear and easy to read.
+Rules:
+- Escape all line breaks as \\n
+- Use only double curly braces ({{ and }}) to escape literal curly braces
+- Do not include formatting instructions in the output
+- No trailing commas or string concatenation
+- JSON must be valid and parsable
 
-RETURN FORMAT:
-Make sure the response is valid JSON: no trailing commas, no comments, no string concatenation, and escape all line breaks as '\\n'.
-A strict JSON object (check to make sure it is valid JSON) with the following:
-- If analysis is requested:
-{{{{
-  "general_response": "Summary of the analysis",
+If analysis is required, return something like:
+
+{{ 
+  "general_response": "A concise summary of the customer segmentation analysis.",
   "analysis_required": true,
-  "segment_labels": {{{{
+  "segment_labels": {{
     "0": "Label for segment 0",
     "1": "Label for segment 1",
     "2": "Label for segment 2"
-  }}}},
-  "insights": "Detailed explanation of patterns and marketing implications.",
-  "summary_table": "Provide a single-line Markdown table string, without using + for concatenation. Escape newlines as \\n inside the JSON string."
-}}}}
+    // Additional segments as needed
+  }},
+  "insights": "Key insights describing patterns and implications across all segments.",
+  "summary_table": "segment_name | avg_p1 | avg_member_rating | avg_purchase_frequency | customer_count\\nLabel 0 | 0.85 | 4.3 | 2.7 | 1300\\nLabel 1 | 0.67 | 4.0 | 2.3 | 1100\\nLabel 2 | 0.45 | 3.2 | 1.9 | 900"
+}}
 
-- If no analysis is required:
-{{{{
-  "general_response": "Response indicating no segment analysis needed",
+If no analysis is required, return:
+
+{{ 
+  "general_response": "No segment analysis needed.",
   "analysis_required": false,
   "segment_labels": {{}},
   "insights": "",
   "summary_table": ""
-}}}}
+}}
 """
 )
+
+
 
 
 # === TEST SEGMENT ANALYSIS AGENT ===
@@ -182,3 +180,35 @@ console = Console()
 console.rule("[bold green]Segment Analysis Output")
 console.print_json(data=result)
 
+
+# Step 1: Format the table
+raw_table = result["summary_table"].replace("\\n", "\n")
+df = pd.read_csv(StringIO(raw_table), sep="|")
+df.columns = df.columns.str.strip()
+df = df.apply(lambda x: x.str.strip() if x.dtype == "object" else x)
+
+# Replace label names
+segment_labels = result["segment_labels"]
+df["segment_name"] = df["segment_name"].apply(lambda x: segment_labels.get(x.split()[-1], x))
+
+# Step 2: Build the Markdown string
+markdown_report = f"""
+## 🧠 Segment Analysis Report
+
+**General Response**  
+{result["general_response"]}
+
+**Analysis Required**  
+{result["analysis_required"]}
+
+**Segment Labels**  
+""" + "\n".join([f'- **{k}**: {v}' for k, v in segment_labels.items()]) + """
+
+**Insights**  
+""" + result["insights"] + """
+
+**Summary Table**  
+""" + df.to_markdown(index=False)
+
+# Print or save it
+print(markdown_report)

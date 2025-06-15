@@ -181,7 +181,7 @@ console.rule("[bold green]Segment Analysis Output")
 console.print_json(data=result)
 
 
-# Step 1: Format the table
+# Format the table
 raw_table = result["summary_table"].replace("\\n", "\n")
 df = pd.read_csv(StringIO(raw_table), sep="|")
 df.columns = df.columns.str.strip()
@@ -191,9 +191,9 @@ df = df.apply(lambda x: x.str.strip() if x.dtype == "object" else x)
 segment_labels = result["segment_labels"]
 df["segment_name"] = df["segment_name"].apply(lambda x: segment_labels.get(x.split()[-1], x))
 
-# Step 2: Build the Markdown string
+# Build the Markdown string
 markdown_report = f"""
-## 🧠 Segment Analysis Report
+# 🧠 Segment Analysis Report
 
 **General Response**  
 {result["general_response"]}
@@ -210,5 +210,6 @@ markdown_report = f"""
 **Summary Table**  
 """ + df.to_markdown(index=False)
 
-# Print or save it
-print(markdown_report)
+# Print 
+console = Console()
+console.print(Markdown(markdown_report))

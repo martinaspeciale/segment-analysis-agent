@@ -1,8 +1,47 @@
 from langchain_core.messages import HumanMessage 
 from rich.console import Console
 from rich.markdown import Markdown
+import time
+import yaml
+import requests
 from io import StringIO
 import pandas as pd
+import psutil
+import sys
+
+
+def check_memory(required_gb):
+    available_gb = psutil.virtual_memory().available / (1024 ** 3)
+    print(f"🔍 Available RAM: {available_gb:.2f} GB")
+    if available_gb < required_gb:
+        print(f"❌ Not enough RAM. At least {required_gb} GB required.")
+        sys.exit(1)
+    print("✅ Enough RAM available.")
+
+def wait_for_ollama_ready(timeout: int = 60) -> bool:
+    """
+    Wait for Ollama server to become ready (listening on localhost:11434).
+    
+    Args:
+        timeout (int): Maximum time to wait in seconds.
+
+    Raises:
+        TimeoutError: If Ollama doesn't start within the timeout.
+
+    Returns:
+        bool: True if Ollama is ready.
+    """
+    start = time.time()
+    while time.time() - start < timeout:
+        try:
+            r = requests.get("http://localhost:11434")
+            if r.status_code == 200:
+                return True
+        except requests.RequestException:
+            pass
+        time.sleep(1)
+    raise TimeoutError("❌ Ollama did not start in time.")
+
 
 # Helper function to run and display segment analysis
 def run_segment_analysis(pipeline, test_input, show_raw=False, show_json=False):

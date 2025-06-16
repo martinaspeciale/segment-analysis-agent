@@ -6,21 +6,17 @@ sqlalchemy
 pyyaml
 plotly
 
-# AI & LLMs
+# AI & LangGraph
 langchain
-langchain-openai
-openai
 langchain-community
-langchain_ollama
+requests
+python-dotenv
 
 # Terminal / Utilities
 rich
-requests
+tabulate
 faker
 
 # Notebook Environment (Optional / Dev)
 ipython
 jupyter
-
-# Ollama Python bindings (used via `ollama.chat`)
-ollama

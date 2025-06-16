@@ -1,218 +1,211 @@
-from io import StringIO
-
-# === TERMINAL RENDERING ===
+import os
+import json
+import pandas as pd
+from tabulate import tabulate
+from dotenv import load_dotenv
+from sqlalchemy import create_engine
 from rich.console import Console
 from rich.markdown import Markdown
-
-# === AGENTS & LANGCHAIN ===
-from langchain_ollama import ChatOllama
+from plotly.io import from_json
+import plotly.express as px
+from typing import Sequence, TypedDict
+from langgraph.graph import StateGraph, END
+from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
 from langchain.prompts import PromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
-from langchain_core.messages import HumanMessage
-from typing import Sequence, TypedDict
-
-# === SYSTEM UTILITIES ===
-import os
-import time
-import yaml
 import requests
 
-# === DATA SCIENCE STACK ===
-import pandas as pd
-from sqlalchemy import create_engine
-import plotly.express as px
-import plotly.io as pio
+load_dotenv()
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 
-# === DEBUGGING ===
-from pprint import pprint
+class ChatOpenRouter:
+    def __init__(self, model: str):
+        self.model = model
+        self.api_url = "https://openrouter.ai/api/v1/chat/completions"
+        self.headers = {
+            "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+            "Content-Type": "application/json"
+        }
 
-# === CUSTOM UTILITIES ===
-from marketing_analysis_team.agents.utils import run_segment_analysis, get_last_human_message
-
-# === OLLAMA LOW-LEVEL ===
-import ollama
-
-
-def wait_for_ollama_ready(timeout: int = 60) -> bool:
-    """
-    Wait for Ollama server to become ready (listening on localhost:11434).
-    
-    Args:
-        timeout (int): Maximum time to wait in seconds.
-
-    Raises:
-        TimeoutError: If Ollama doesn't start within the timeout.
-
-    Returns:
-        bool: True if Ollama is ready.
-    """
-    start = time.time()
-    while time.time() - start < timeout:
-        try:
-            r = requests.get("http://localhost:11434")
-            if r.status_code == 200:
-                return True
-        except requests.RequestException:
-            pass
-        time.sleep(1)
-    raise TimeoutError("❌ Ollama did not start in time.")
-
-
-# === DATABASE CONFIGURATION ===
-db_path = "sqlite:///../data/leads_scored_segmentation.db"
-
-
-# === LLM SETUP ===
-model = "gemma:2b"  # Alternative: "llama3", "mistral", etc.
-llm = ChatOllama(model=model)
-
-# === WAIT FOR OLLAMA SERVER ===
-wait_for_ollama_ready()
-
-'''
-# === TEST OLLAMA CHAT ===
-response = ollama.chat(
-    model=model,
-    messages=[
-        {'role': 'user', 'content': "What is the recipe for pizza?"}
-    ]
-)
-
-# === RENDER MARKDOWN OUTPUT TO TERMINAL ===
-console = Console()
-markdown_text = response['message']['content']
-console.print(Markdown(markdown_text))
-'''
+    def invoke(self, payload: dict):
+        prompt = segment_analysis_prompt.format(**payload)
+        response = requests.post(self.api_url, headers=self.headers, json={
+            "model": self.model,
+            "messages": [{"role": "user", "content": prompt}]
+        })
+        response.raise_for_status()
+        output = response.json()["choices"][0]["message"]["content"]
+        return JsonOutputParser().invoke(output)
 
 segment_analysis_prompt = PromptTemplate(
     input_variables=["initial_question", "chat_history", "segment_statistics"],
     template="""
-You are an expert in marketing analytics for Business Science.
+You are a senior marketing analyst.
 
-Your task is to analyze whether the user's question requires segmentation analysis and, if so, to:
-- Assign meaningful descriptive labels to each segment (segments are identified by numeric IDs like 0, 1, 2, ...).
-- Identify key patterns and actionable marketing insights based on segment statistics.
-- Return all results in a strict JSON format.
+You are provided:
+- A customer question.
+- Chat history.
+- Segment statistics as a JSON list, where each item contains:
+  - segment (int): ID
+  - avg_p1 (float): lead score (0–1)
+  - avg_member_rating (float): engagement score (1–5)
+  - avg_purchase_frequency (float): avg transactions per customer
+  - customer_count (int)
 
-Metrics for each segment include:
-- avg_p1: Lead score (0 to 1)
-- avg_member_rating: Engagement score (1 to 5)
-- avg_purchase_frequency: Average number of transactions per customer
-- customer_count: Number of customers in the segment
+Your tasks:
+1. **Always analyze the segment data**.
+2. Assign clear, non-generic labels to each segment ID (e.g., “First-Time Explorers”, not “Segment 0”).
+3. Write **unique and data-driven insights** based on real differences.
+4. Build a **well-formatted markdown table** of the segment statistics, replacing numeric IDs with labels.
+5. Return only a valid **JSON** object with the fields below. Do not wrap in code blocks or Markdown.
 
-Make your reasoning precise and business-oriented.
-
-RETURN FORMAT (JSON only — not inside code blocks):
-
-Rules:
-- Escape all line breaks as \\n
-- Use only double curly braces ({{ and }}) to escape literal curly braces
-- Do not include formatting instructions in the output
-- No trailing commas or string concatenation
-- JSON must be valid and parsable
-
-If analysis is required, return something like:
-
-{{ 
-  "general_response": "A brief natural language sentence summarizing the key findings from the customer segmentation.",
+Respond with:
+{{
+  "general_response": "Natural language summary of key findings.",
   "analysis_required": true,
   "segment_labels": {{
     "0": "Label for segment 0",
     "1": "Label for segment 1",
-    "2": "Label for segment 2"
-    // Additional segments as needed
+    "2": "Label for segment 2",
+    "3": "Label for segment 3",
+    "4": "Label for segment 4"
   }},
-  "insights": "Key insights describing patterns and implications across all segments.",
-  "summary_table": "segment_name | avg_p1 | avg_member_rating | avg_purchase_frequency | customer_count\\nLabel 0 | 0.85 | 4.3 | 2.7 | 1300\\nLabel 1 | 0.67 | 4.0 | 2.3 | 1100\\nLabel 2 | 0.45 | 3.2 | 1.9 | 900"
-}}
-
-If no analysis is required, return:
-
-{{ 
-  "general_response": "No segment analysis needed.",
-  "analysis_required": false,
-  "segment_labels": {{}},
-  "insights": "",
-  "summary_table": ""
+  "insights": "3 to 5 unique insights derived from the segment data. Be specific.",
+  "summary_table": "segment_name | avg_p1 | avg_member_rating | avg_purchase_frequency | customer_count\\nLabel 1 | 0.6 | 3.5 | 2.1 | 1500"
 }}
 """
 )
 
+class GraphState(TypedDict):
+    messages: Sequence[BaseMessage]
+    response: Sequence[BaseMessage]
+    insights: str
+    summary_table: str
+    analysis_required: bool
+    segment_labels: dict
+    segmentation_data: dict
+    chart_json: str
 
+def get_last_human_message(messages):
+    for m in reversed(messages):
+        if isinstance(m, HumanMessage):
+            return m
+    return None
 
+def segment_analysis_node(state: GraphState) -> GraphState:
+    print("\n—— SEGMENT ANALYSIS AGENT ——")
+    engine = create_engine("sqlite:///data/leads_scored_segmentation.db")
+    conn = engine.connect()
 
-# === TEST SEGMENT ANALYSIS AGENT ===
+    df_leads = pd.read_sql("SELECT user_email, p1, member_rating, segment FROM leads_scored", conn)
+    df_transactions = pd.read_sql("SELECT user_email, purchased_at FROM transactions", conn)
+    conn.close()
 
-test_input = {
-    "initial_question": "Can you analyze the segments and provide insights?",
-    "chat_history": [],
-    "segment_statistics": [
-        {
-            "segment": 0,
-            "avg_p1": 0.85,
-            "avg_member_rating": 4.2,
-            "avg_purchase_frequency": 3.1,
-            "customer_count": 1500
-        },
-        {
-            "segment": 1,
-            "avg_p1": 0.35,
-            "avg_member_rating": 2.9,
-            "avg_purchase_frequency": 1.2,
-            "customer_count": 4200
-        },
-        {
-            "segment": 2,
-            "avg_p1": 0.15,
-            "avg_member_rating": 1.4,
-            "avg_purchase_frequency": 0.3,
-            "customer_count": 700
-        }
-    ]
-}
-segment_analyzer = segment_analysis_prompt | llm | JsonOutputParser()
-run_segment_analysis(segment_analyzer, test_input, show_raw=True, show_json=True)
-''' 
-result = segment_analyzer.invoke(test_input)
-print("🟡 Raw response from model:")
-print(result)
+    purchase_freq = df_transactions.groupby("user_email").size().reset_index(name="purchase_frequency")
+    df_analysis = df_leads.merge(purchase_freq, on="user_email", how="left")
+    df_analysis["purchase_frequency"] = df_analysis["purchase_frequency"].fillna(0)
+
+    df_summary = df_analysis.groupby("segment").agg({
+        "p1": "mean",
+        "member_rating": "mean",
+        "purchase_frequency": "mean",
+        "user_email": "count"
+    }).rename(columns={"user_email": "customer_count"}).reset_index()
+
+    df_summary["avg_p1"] = df_summary["p1"].round(3)
+    df_summary["avg_member_rating"] = df_summary["member_rating"].round(2)
+    df_summary["avg_purchase_frequency"] = df_summary["purchase_frequency"].round(2)
+
+    segment_stats_json = df_summary[["segment", "avg_p1", "avg_member_rating", "avg_purchase_frequency", "customer_count"]].to_dict(orient="records")
+
+    messages = state.get("messages")
+    last_question = get_last_human_message(messages)
+    last_question = last_question.content if last_question else ""
+
+    llm = ChatOpenRouter(model="deepseek/deepseek-r1:free")
+    result = llm.invoke({
+        "initial_question": last_question,
+        "chat_history": messages,
+        "segment_statistics": json.dumps(segment_stats_json)
+    })
+
+    insights = result["insights"]
+    if isinstance(insights, list):
+        insights = "\n".join(f"- {item}" for item in insights)
+        print("\n—— LLM RESPONSE ——")
+        
+    console = Console()
+    console.print(Markdown(f"**General Response:** {result['general_response']}\n\n**Insights:** {result['insights']}"))
+
+    default_labels = {str(i): f"Segment {i}" for i in df_summary["segment"]}
+    segment_labels = {str(k): v for k, v in result.get("segment_labels", default_labels).items()}
+
+    df_summary["segment_name"] = df_summary["segment"].astype(str).map(segment_labels)
+
+    df_viz = df_summary.melt(
+        id_vars=["segment_name"],
+        value_vars=["avg_p1", "avg_member_rating", "avg_purchase_frequency"],
+        var_name="metric",
+        value_name="value"
+    )
+
+    fig = px.bar(
+        df_viz,
+        x="segment_name",
+        y="value",
+        color="metric",
+        barmode="group",
+        title="Segment Analysis: Lead Score, Member Rating, and Purchase Frequency"
+    )
+
+    os.makedirs("output", exist_ok=True)
+    fig.write_html("output/segment_analysis_chart.html")
+    console.print("[bold yellow]📊 Chart saved to: output/segment_analysis_chart.html")
+
+    chart_json = fig.to_json()
+
+    return {
+        "response": [AIMessage(content=result["general_response"] + "\n\n" + insights)],
+        "name": "SegmentAnalysisAgent",
+        "insights": result.get("insights", ""),
+        "summary_table": result.get("summary_table", ""),
+        "analysis_required": result.get("analysis_required", False),
+        "segment_labels": segment_labels,
+        "segmentation_data": df_summary.to_dict(),
+        "chart_json": chart_json
+    }
+
+workflow = StateGraph(GraphState)
+workflow.add_node("segment_analyzer", segment_analysis_node)
+workflow.set_entry_point("segment_analyzer")
+workflow.add_edge("segment_analyzer", END)
+app = workflow.compile()
+
+messages = [HumanMessage(content="Can you analyze the segments and provide insights?")]
+results = app.invoke({"messages": messages})
 
 console = Console()
-console.rule("[bold green]Segment Analysis Output")
-console.print_json(data=result)
+console.rule("[bold green]Segment Analysis")
+console.print(Markdown(results["response"][0].content))
 
+summary_df = pd.DataFrame.from_dict(results["segmentation_data"])
+summary_df = summary_df[["segment_name", "avg_p1", "avg_member_rating", "avg_purchase_frequency", "customer_count"]]
+console.print("[bold blue]Summary Table")
+print(tabulate(summary_df, headers="keys", tablefmt="github", showindex=False))
 
-# Format the table
-raw_table = result["summary_table"].replace("\\n", "\n")
-df = pd.read_csv(StringIO(raw_table), sep="|")
-df.columns = df.columns.str.strip()
-df = df.apply(lambda x: x.str.strip() if x.dtype == "object" else x)
-
-# Replace label names
-segment_labels = result["segment_labels"]
-df["segment_name"] = df["segment_name"].apply(lambda x: segment_labels.get(x.split()[-1], x))
-
-# Build the Markdown string
-markdown_report = f"""
-# 🧠 Segment Analysis Report
-
-**General Response**  
-{result["general_response"]}
-
-**Analysis Required**  
-{result["analysis_required"]}
-
-**Segment Labels**  
-""" + "\n".join([f'- **{k}**: {v}' for k, v in segment_labels.items()]) + """
-
-**Insights**  
-""" + result["insights"] + """
-
-**Summary Table**  
-""" + df.to_markdown(index=False)
-
-# Print 
-console = Console()
-console.print(Markdown(markdown_report))
-
-'''
+# === MANUAL TESTING EXAMPLE ===
+# test_input = {
+#     "initial_question": "Please perform full segmentation analysis, regardless of similarity.",
+#     "chat_history": [],
+#     "segment_statistics": [
+#         {"segment": 0, "avg_p1": 0.82, "avg_member_rating": 4.5, "avg_purchase_frequency": 3.7, "customer_count": 1800},
+#         {"segment": 1, "avg_p1": 0.63, "avg_member_rating": 3.8, "avg_purchase_frequency": 2.4, "customer_count": 2200},
+#         {"segment": 2, "avg_p1": 0.41, "avg_member_rating": 2.7, "avg_purchase_frequency": 1.5, "customer_count": 1700},
+#         {"segment": 3, "avg_p1": 0.27, "avg_member_rating": 1.9, "avg_purchase_frequency": 0.7, "customer_count": 950},
+#         {"segment": 4, "avg_p1": 0.10, "avg_member_rating": 1.1, "avg_purchase_frequency": 0.3, "customer_count": 600}
+#     ]
+# }
+#
+# segment_analyzer = segment_analysis_prompt | ChatOpenRouter(model="deepseek/deepseek-r1:free") | JsonOutputParser()
+# result = segment_analyzer.invoke(test_input)
+# print(json.dumps(result, indent=2))

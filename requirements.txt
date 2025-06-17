@@ -9,6 +9,7 @@ plotly
 # AI & LangGraph
 langchain
 langchain-community
+langgraph
 requests
 python-dotenv
 
@@ -16,6 +17,9 @@ python-dotenv
 rich
 tabulate
 faker
+
+# App Interface
+streamlit
 
 # Notebook Environment (Optional / Dev)
 ipython

@@ -21,12 +21,17 @@ from segment_agent import app as segment_app
 st.set_page_config(page_title="Segment Analysis Agent", layout="wide")
 st.title("🧠 Segment Analysis Agent")
 
-# Database
-DB_PATH = "sqlite:///data/leads_scored_segmentation.db"
+# Sidebar: Select Database
+st.sidebar.header("🗂 Select Dataset")
+available_dbs = [f for f in os.listdir("data") if f.endswith(".db")]
+selected_db = st.sidebar.selectbox("Choose a database", available_dbs)
+
+# Build full path and create SQLAlchemy engine
+DB_PATH = f"sqlite:///data/{selected_db}"
 engine = create_engine(DB_PATH)
 
-# Sidebar: DB Tables
-st.sidebar.header("📂 Explore Database")
+# Sidebar: Select Table to Preview
+st.sidebar.header("📂 Explore Tables")
 with engine.connect() as conn:
     table_names = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table';")).fetchall()
     table_names = [t[0] for t in table_names]

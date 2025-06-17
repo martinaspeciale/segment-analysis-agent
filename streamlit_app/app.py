@@ -6,7 +6,11 @@ import sys
 import os
 from sqlalchemy import text
 from plotly.io import from_json
-
+import re
+from pathlib import Path
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "scripts")))
+from segment_agent import get_segment_app
+segment_app = get_segment_app()
 
 
 # Add the ../scripts folder to sys.path
@@ -14,9 +18,6 @@ current_dir = os.path.dirname(__file__)
 scripts_path = os.path.abspath(os.path.join(current_dir, "..", "scripts"))
 if scripts_path not in sys.path:
     sys.path.append(scripts_path)
-
-from segment_agent import app as segment_app
-
 
 st.set_page_config(page_title="Segment Analysis Agent", layout="wide")
 st.title("🧠 Segment Analysis Agent")
@@ -44,6 +45,21 @@ if selected_table:
     st.sidebar.subheader(f"🧾 Preview of `{selected_table}`")
     st.sidebar.dataframe(df_preview)
 
+# debug 
+st.sidebar.write(f"📁 Using database: {selected_db}")
+# Extract expected segment count from filename
+match = re.search(r"case(\d+)", selected_db)
+case_segment_map = {
+    "1": 3,
+    "2": 4,
+    "3": 3,
+    "4": 4,
+    "5": 3
+}
+expected_segments = case_segment_map.get(match.group(1), "unknown") if match else "unknown"
+st.sidebar.write(f"🎯 Expected number of segments: {expected_segments}")
+## debug end 
+
 st.markdown("---")
 
 # Main panel: Segment Agent
@@ -53,7 +69,17 @@ user_question = st.text_area("What would you like to know about your customer se
 if st.button("Run Analysis"):
     with st.spinner("Running segment analysis..."):
         messages = [HumanMessage(content=user_question)]
-        results = segment_app.invoke({"messages": messages})
+        # results = segment_app.invoke({"messages": messages})
+        db_path = Path("data") / selected_db
+        db_url = f"sqlite:///{db_path.resolve()}"
+
+        results = segment_app.invoke({
+            "messages": messages,
+            "db_path": db_url
+        })
+
+        segment_ids = sorted(set([row["segment"] for row in results["segmentation_data"]]))
+        st.info(f"🧪 Segments found in DB: {segment_ids}")
 
         st.subheader("🧠 General Insights")
         st.markdown(results["response"][0].content)

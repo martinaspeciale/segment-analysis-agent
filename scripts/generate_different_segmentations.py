@@ -8,7 +8,7 @@ from sklearn.cluster import KMeans
 from sklearn.preprocessing import StandardScaler
 from datetime import datetime
 
-def generate_segmented_db(db_name, segment_definitions, n_leads=1000, n_clusters=3):
+def generate_segmented_db(db_name, segment_definitions, n_leads=10000, n_clusters=3):
     fake = Faker()
     Faker.seed(42)
     random.seed(42)
@@ -76,6 +76,11 @@ def generate_segmented_db(db_name, segment_definitions, n_leads=1000, n_clusters
     conn = sqlite3.connect(db_path)
     leads_df.to_sql("leads_scored", conn, if_exists="replace", index=False)
     transactions_df.to_sql("transactions", conn, if_exists="replace", index=False)
+    
+    assert leads_df["user_email"].is_unique, "🚨 Duplicate emails in leads!"
+    assert transactions_df["user_email"].isin(leads_df["user_email"]).all(), "🚨 Transactions contain unknown emails!"
+
+    
     conn.close()
     print(f"✅ Created: {db_path}")
 
@@ -138,6 +143,7 @@ if __name__ == "__main__":
         generate_segmented_db(
             db_name=case["db_name"],
             segment_definitions=case["definition"],
-            n_leads=1000,
+            n_leads=10000,
             n_clusters=case["n_segments"]
         )
+

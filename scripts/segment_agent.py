@@ -52,20 +52,23 @@ You are provided:
   - customer_count (int)
 
 Your tasks:
-1. **Always analyze the segment data**.
-2. Assign clear, non-generic labels to each segment ID (e.g., “First-Time Explorers”, not “Segment 0”).
-3. Write **unique and data-driven insights** based on real differences.
-4. Build a **well-formatted markdown table** of the segment statistics, replacing numeric IDs with labels.
-5. Return only a valid **JSON** object with the fields below. Do not wrap in code blocks or Markdown.
-6. Only refer to segments that appear in the input data. Do not invent or assume any additional segments.
+1. **Assign clear, non-generic names** to each segment ID (e.g., “Loyal Advocates”, not “Segment 0”) using the segment_label_keys format provided.
+2. **Write 3–5 unique and data-driven insights** that compare the segments using only the provided statistics.
+3. **Only reference segments that appear in the input data**. Do not invent new segment IDs or names.
+4. Focus on differences in behavior, potential, and strategic opportunities between segments.
+5. When assigning labels, base your choice strictly on the behavior reflected in the statistics. Do not infer psychological or economic motivations (e.g., "price-sensitive") unless they are strongly supported by the data.
+6. If a segment shows high engagement and high lead score but low purchases, label them as "unconverted" or "high-intent".
+7. If a segment has low values across the board, label them as "inactive", "low-value", or "dormant".
+8. Do not make up or adjust any statistics — use the numbers exactly as provided.
+9. Do not round, interpolate, or summarize totals. Do not fabricate a table — this will be handled separately.
 
-Respond with:
+Respond with a valid JSON object containing:
+
 {{
-  "general_response": "Natural language summary of key findings.",
+  "general_response": "High-level summary of the key findings and patterns.",
   "analysis_required": true,
   "segment_labels": {{segment_label_keys}},
-  "insights": "3 to 5 unique insights derived from the segment data. Be specific.",
-  "summary_table": "segment_name | avg_p1 | avg_member_rating | avg_purchase_frequency | customer_count\\nLabel 1 | 0.6 | 3.5 | 2.1 | 1500"
+  "insights": "List of specific insights derived from the segment data."
 }}
 """
 )
@@ -97,14 +100,8 @@ def segment_analysis_node(state: GraphState) -> GraphState:
     df_leads = pd.read_sql("SELECT user_email, p1, member_rating, segment FROM leads_scored", conn)
     df_leads = df_leads.drop_duplicates(subset="user_email")  # <-- ENSURE unique users
 
-    print("🧪 Raw leads loaded:", len(df_leads))
-    print("👤 Unique users in leads:", df_leads['user_email'].nunique())
-
     df_transactions = pd.read_sql("SELECT user_email, purchased_at FROM transactions", conn)
     conn.close()
-
-    print("🛒 Transactions loaded:", len(df_transactions))
-    print("👤 Unique users in transactions:", df_transactions['user_email'].nunique())
 
     purchase_freq = df_transactions.groupby("user_email").size().reset_index(name="purchase_frequency")
     df_analysis = df_leads.merge(purchase_freq, on="user_email", how="left")
@@ -116,8 +113,6 @@ def segment_analysis_node(state: GraphState) -> GraphState:
         "purchase_frequency": "mean",
         "user_email": "nunique" # "count" inflated the counts, with "nunique" we are sure to include only unique users per each segment
     }).rename(columns={"user_email": "customer_count"}).reset_index()
-
-    print("✅ Final rows after drop_duplicates:", len(df_analysis))
 
     df_summary["avg_p1"] = df_summary["p1"].round(3)
     df_summary["avg_member_rating"] = df_summary["member_rating"].round(2)
@@ -141,13 +136,28 @@ def segment_analysis_node(state: GraphState) -> GraphState:
         "segment_label_keys": segment_label_keys
     })
 
+    default_labels = {str(i): f"Segment {i}" for i in df_summary["segment"]}
+    segment_labels = {str(k): v for k, v in result.get("segment_labels", default_labels).items()}
+    df_summary["segment_name"] = df_summary["segment"].astype(str).map(segment_labels)
+
+    # Extract known segment names
+    known_segment_names = set(df_summary["segment_name"])
+
     insights = result["insights"]
     if isinstance(insights, list):
         insights = "\n".join(f"- {item}" for item in insights)
 
-    default_labels = {str(i): f"Segment {i}" for i in df_summary["segment"]}
-    segment_labels = {str(k): v for k, v in result.get("segment_labels", default_labels).items()}
-    df_summary["segment_name"] = df_summary["segment"].astype(str).map(segment_labels)
+    # Filter hallucinated segment names
+    insight_lines = insights.strip().split("\n")
+    filtered_insights = []
+    for line in insight_lines:
+        if any(name in line for name in known_segment_names):
+            filtered_insights.append(line)
+        else:
+            print(f"⚠️ Skipping hallucinated insight: {line}")
+
+    # Rebuild cleaned insight block
+    cleaned_insights = "\n".join(filtered_insights)
 
     df_viz = df_summary.melt(
         id_vars=["segment_name"],
@@ -168,10 +178,10 @@ def segment_analysis_node(state: GraphState) -> GraphState:
     chart_json = fig.to_json()
 
     return {
-        "response": [AIMessage(content=result["general_response"] + "\n\n" + insights)],
+        "response": [AIMessage(content=result["general_response"] + "\n\n" + cleaned_insights)],
         "name": "SegmentAnalysisAgent",
         "insights": insights,
-        "summary_table": result.get("summary_table", ""),
+        # "summary_table": result.get("summary_table", ""),
         "analysis_required": result.get("analysis_required", False),
         "segment_labels": segment_labels,
         "segmentation_data": df_summary.to_dict(orient="records"),
@@ -228,14 +238,25 @@ if __name__ == "__main__":
 
     print("✅ LLM Output:")
     print(result["response"][0].content)
-    # Usa i dati strutturati veri restituiti dal backend, non quelli dell’LLM
+
     df_summary = pd.DataFrame(result["segmentation_data"])
     df_summary = df_summary[["segment_name", "avg_p1", "avg_member_rating", "avg_purchase_frequency", "customer_count"]]
 
-    print("\n📊 Segment Summary Table (Real Data):")
+    print("\n📊 Segment Summary Table:")
     print(tabulate(df_summary, headers="keys", tablefmt="github", showindex=False))
 
 
     # print("\n🧪 Segment IDs returned:")
     # print(sorted(set([row["segment"] for row in result["segmentation_data"]])))
  
+'''
+in the "Respond with:" of the segment_analysis_prompt we removed:
+  "summary_table": (
+    "A markdown-style table that summarizes the provided segment statistics. "
+    "Each row must correspond to one of the JSON entries above. "
+    "Use the exact numeric values from the input JSON — do not round, interpolate, or invent any numbers. "
+    "Example format:\n"
+    "segment_name | avg_p1 | avg_member_rating | avg_purchase_frequency | customer_count\n"
+    "Label 1      | 0.61   | 3.5               | 2.1                    | 1500"
+    )
+'''

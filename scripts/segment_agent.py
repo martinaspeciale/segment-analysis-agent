@@ -27,7 +27,8 @@ class ChatOpenRouter:
         }
 
     def invoke(self, payload: dict):
-        prompt = segment_analysis_prompt.format(**payload)
+        prompt = payload["prompt"]  # ← this is now passed in directly
+
         response = requests.post(self.api_url, headers=self.headers, json={
             "model": self.model,
             "messages": [{"role": "user", "content": prompt}]
@@ -52,7 +53,7 @@ You are provided:
   - customer_count (int)
 
 Your tasks:
-1. **Assign clear, non-generic names** to each segment ID (e.g., “Loyal Advocates”, not “Segment 0”) using the segment_label_keys format provided.
+1. **Assign clear, non-generic names** to each segment ID (e.g., “Loyal Advocates”, not “Segment 0”) using the segment_label_keys dictionary.
 2. **Write 3–5 unique and data-driven insights** that compare the segments using only the provided statistics.
 3. **Only reference segments that appear in the input data**. Do not invent new segment IDs or names.
 4. Focus on differences in behavior, potential, and strategic opportunities between segments.
@@ -60,18 +61,20 @@ Your tasks:
 6. If a segment shows high engagement and high lead score but low purchases, label them as "unconverted" or "high-intent".
 7. If a segment has low values across the board, label them as "inactive", "low-value", or "dormant".
 8. Do not make up or adjust any statistics — use the numbers exactly as provided.
-9. Do not round, interpolate, or summarize totals. Do not fabricate a table — this will be handled separately.
+9. Do not fabricate a table — this will be handled separately.
+
 
 Respond with a valid JSON object containing:
 
 {{
   "general_response": "High-level summary of the key findings and patterns.",
   "analysis_required": true,
-  "segment_labels": {{segment_label_keys}},
-  "insights": "List of specific insights derived from the segment data."
+  "segment_labels": {segment_label_keys},
+  "insights": "List of specific insights derived from the segment data.",
 }}
 """
 )
+
 
 class GraphState(TypedDict):
     messages: Sequence[BaseMessage]
@@ -128,14 +131,22 @@ def segment_analysis_node(state: GraphState) -> GraphState:
     last_question = get_last_human_message(messages)
     last_question = last_question.content if last_question else ""
 
-    llm = ChatOpenRouter(model="deepseek/deepseek-r1:free")
-    result = llm.invoke({
-        "initial_question": last_question,
-        "chat_history": messages,
-        "segment_statistics": json.dumps(segment_stats_json),
-        "segment_label_keys": segment_label_keys
-    })
+    segment_label_keys = json.dumps({str(s): f"Label for segment {s}" for s in segments}, indent=2)
+    '''
+    Tested Models:
+     ---> deepseek/deepseek-r1:free
+     ---> mistralai/mistral-7b-instruct
+    '''
+    # llm = ChatOpenRouter(model="deepseek/deepseek-r1:free")
+    llm = ChatOpenRouter(model="mistralai/mistral-7b-instruct")
+    prompt = segment_analysis_prompt.format_prompt(
+        initial_question=last_question,
+        chat_history=messages,
+        segment_statistics=json.dumps(segment_stats_json),
+        segment_label_keys=segment_label_keys
+    ).to_string()
 
+    result = llm.invoke({"prompt": prompt})
     default_labels = {str(i): f"Segment {i}" for i in df_summary["segment"]}
     segment_labels = {str(k): v for k, v in result.get("segment_labels", default_labels).items()}
     df_summary["segment_name"] = df_summary["segment"].astype(str).map(segment_labels)
@@ -188,9 +199,62 @@ def segment_analysis_node(state: GraphState) -> GraphState:
         "chart_json": chart_json
     }
 
+def strategy_generator_node(state: GraphState) -> GraphState:
+    segment_data = state["segmentation_data"]
+    label_to_stats = {
+        row["segment_name"]: {
+            "avg_p1": row["avg_p1"],
+            "avg_member_rating": row["avg_member_rating"],
+            "avg_purchase_frequency": row["avg_purchase_frequency"],
+            "customer_count": row["customer_count"]
+        } for row in segment_data
+    }
+    prompt = f"""
+You are a senior marketing strategist.
+
+You are given a set of customer segments, each with a name and associated statistics:
+{json.dumps(label_to_stats, indent=2)}
+
+Write one actionable marketing recommendation per segment.
+Each should be one sentence, customized to the segment's size, behavior, and value.
+
+Return ONLY a JSON object with this structure:
+
+{{
+  "strategy_recommendations": {{
+    "Segment Label 1": "Recommendation",
+    "Segment Label 2": "Recommendation"
+  }}
+}}
+""".strip()
+
+    llm = ChatOpenRouter(model="mistralai/mistral-7b-instruct")
+    raw_response = llm.invoke({"prompt": prompt})
+
+    strategy_recs = {}
+    if isinstance(raw_response, dict) and "strategy_recommendations" in raw_response:
+        strategy_recs = raw_response["strategy_recommendations"]
+    elif isinstance(raw_response, str):
+        try:
+            strategy_recs = json.loads(raw_response.replace("'", '"')).get("strategy_recommendations", {})
+        except Exception:
+            matches = re.findall(r'-\s*(.+?):\s*(.+)', raw_response)
+            strategy_recs = {name.strip(): rec.strip() for name, rec in matches}
+
+    return {
+        **state,
+        "strategy_recommendations": strategy_recs,
+        "response": state["response"] + [
+            AIMessage(content="\n📌 Strategy Recommendations:\n" + "\n".join(f"- {k}: {v}" for k, v in strategy_recs.items()))
+        ]
+    }
+
 workflow = StateGraph(GraphState)
 workflow.add_node("segment_analyzer", segment_analysis_node)
+
+workflow.add_node("strategy_generator", strategy_generator_node)
 workflow.set_entry_point("segment_analyzer")
+workflow.add_edge("segment_analyzer", "strategy_generator")
 workflow.add_edge("segment_analyzer", END)
 def get_segment_app():
     return workflow.compile()
@@ -244,6 +308,19 @@ if __name__ == "__main__":
 
     print("\n📊 Segment Summary Table:")
     print(tabulate(df_summary, headers="keys", tablefmt="github", showindex=False))
+
+    strategy_text = ""
+
+    for msg in result.get("response", []):
+        if isinstance(msg, AIMessage) and "Strategy Recommendations" in msg.content:
+            strategy_text = msg.content
+            break
+
+    if strategy_text:
+        print(strategy_text)
+    else:
+        print("⚠️ No strategy recommendations found in response.")
+
 
 
     # print("\n🧪 Segment IDs returned:")

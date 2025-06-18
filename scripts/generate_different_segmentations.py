@@ -38,20 +38,29 @@ def generate_segmented_db(db_name, segment_definitions, n_leads=10000, n_cluster
 
         emails = list(emails)
         count = len(emails)
+        # Introduce dependency between p1 and member_rating
+        base_p1 = np.random.uniform(*spec["p1_range"], count)
+        # member_rating is partly correlated with p1, plus noise
+        base_rating = (base_p1 * 3.5) + np.random.uniform(-0.5, 1.0, count)
+        base_rating = np.clip(base_rating, *spec["rating_range"])
+
         leads = pd.DataFrame({
             'user_full_name': selected_names,
             'user_email': emails,
-            'member_rating': np.round(np.random.uniform(*spec["rating_range"], count)).astype(int),
+            'member_rating': np.round(base_rating, 1),
             'optin_days': np.random.randint(-800, 0, size=count),
-            'p1': np.random.uniform(*spec["p1_range"], count)
+            'p1': np.round(base_p1, 3)
         })
+
         leads_list.append(leads)
 
     leads_df = pd.concat(leads_list, ignore_index=True)
 
     transactions = []
-    for email, rating in zip(leads_df["user_email"], leads_df["member_rating"]):
-        n_tx = np.random.poisson(rating / 2.0)
+    for email, rating, p1 in zip(leads_df["user_email"], leads_df["member_rating"], leads_df["p1"]):
+        # purchase frequency depends on both rating and p1
+        expected_tx = (rating / 2.5) + (p1 * 2.0)
+        n_tx = np.random.poisson(expected_tx)
         for _ in range(n_tx):
             transactions.append({
                 "user_email": email,

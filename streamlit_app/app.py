@@ -83,6 +83,11 @@ if st.button("Run Analysis"):
 
         st.subheader("🧠 General Insights")
         st.markdown(results["response"][0].content)
+        if len(results["response"]) > 1:
+            strategy_msg = results["response"][1].content
+            st.subheader("📌 Strategy Recommendations")
+            st.markdown(strategy_msg)
+
 
         st.subheader("📊 Segment Summary Table")
         summary_df = pd.DataFrame.from_dict(results["segmentation_data"])
